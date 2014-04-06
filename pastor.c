@@ -96,10 +96,9 @@ int get_key()
     tcsetattr( STDIN_FILENO, TCSANOW, &newt);
 
     printf("Enter key: ");
-    while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE - 1) {
+    while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE) {
         key[i++] = c;
     }
-    key[i] = '\0';
 
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 
