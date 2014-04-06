@@ -15,6 +15,7 @@ char* key;
 
 int algorithm = GCRY_CIPHER_BLOWFISH;
 int mode = GCRY_CIPHER_MODE_ECB;
+FILE* tmp_file;
 struct arg_lit* generate;
 struct arg_end* end;
 struct arg_file* output_file;
@@ -110,24 +111,23 @@ int get_key()
     return 0;
 }
 
-int encrypt(int algorithm, int mode, char* in, char* out)
+int encrypt()
 {
     gcry_cipher_hd_t hd;
-    FILE* fpin;
     FILE* fpout;
     char* buffer = malloc(BUFFER_SIZE);
     memset(buffer, 0, BUFFER_SIZE);
     int nr_bytes;
 
-    fpin = fopen(in, "r");
-    fpout = fopen(out, "w");
+    fpout = fopen(output_file->filename[0], "w");
+    rewind(tmp_file);
 
     gcry_cipher_open(&hd, algorithm, mode, 0);
     gcry_cipher_setkey(hd, key, 16);
 
-    while(!feof(fpin))
+    while(!feof(tmp_file))
     {
-        nr_bytes = fread(buffer, 1, BUFFER_SIZE, fpin);
+        nr_bytes = fread(buffer, 1, BUFFER_SIZE, tmp_file);
         if (!nr_bytes) break;
         while(nr_bytes < BUFFER_SIZE)
             buffer[nr_bytes++] = 0x0;
@@ -136,23 +136,20 @@ int encrypt(int algorithm, int mode, char* in, char* out)
     }
 
     gcry_cipher_close(hd);
-    fclose(fpin);
     fclose(fpout);
     free(buffer);
     return 0;
 }
 
-int decrypt(int algorithm, int mode, char* in, char* out)
+int decrypt()
 {
     gcry_cipher_hd_t hd;
     FILE* fpin;
-    FILE* fpout;
     char* buffer = malloc(BUFFER_SIZE);
     memset(buffer, 0, BUFFER_SIZE);
     int nr_bytes;
 
-    fpin = fopen(in, "r");
-    fpout = fopen(out, "w");
+    fpin = fopen(output_file->filename[0], "r");
 
     gcry_cipher_open(&hd, algorithm, mode, 0);
     gcry_cipher_setkey(hd, key, 16);
@@ -167,12 +164,11 @@ int decrypt(int algorithm, int mode, char* in, char* out)
         {
             if(buffer[bytes] == 0) break;
         }
-        fwrite(buffer, 1, bytes, fpout);
+        fwrite(buffer, 1, bytes, tmp_file);
     }
 
     gcry_cipher_close(hd);
     fclose(fpin);
-    fclose(fpout);
     free(buffer);
     return 0;
 }
@@ -189,6 +185,32 @@ int import_password()
 
 int fetch_password()
 {
+    // Some debugging. TODO: Real stuff pls.
+    printf("Decrypting.\n");
+    decrypt("old.pass.db");
+    rewind(tmp_file);
+    char tmp_buffer[1024];
+    char* dom;
+    char* pass;
+#if DEBUG
+    printf("\n======\nFile contents:\n");
+#endif
+    while (fgets(tmp_buffer, 1024, tmp_file))
+    {
+        dom = strtok(tmp_buffer, " ");
+        pass = strtok(NULL, " ");
+#if DEBUG
+        printf("\n<DEBUG> Domain: %s\n", dom);
+        printf("<DEBUG> Password: %s\n", pass);
+#endif
+        if (!strcmp(dom, domain->sval[0]))
+        {
+            printf("Password: %s\n", pass);
+        }
+    }
+#if DEBUG
+    printf("======\n");
+#endif
     return 0;
 }
 
@@ -212,6 +234,9 @@ int main(int argc, char** argv)
         fprintf(stderr, "Could not get the key.\n");
     }
 
+    // Create tmp_file. TODO: make implementation better.
+    tmp_file = tmpfile();
+
     if (generate->count > 0)
     {
 #if DEBUG
@@ -234,6 +259,7 @@ int main(int argc, char** argv)
     }
     else
     {
+        printf("Fetching password for %s.\n", domain->sval[0]);
         if (fetch_password())
         {
             return_status = EXIT_FAILURE;
@@ -241,18 +267,8 @@ int main(int argc, char** argv)
     }
 
     free(key);
+    fclose(tmp_file);
     key = NULL;
-
-    /*
-    if (encrypt(algorithm, mode, "pass.db", "encrypted"))
-    {
-        fprintf(stderr, "Failed to encrypt the file.\n");
-    }
-    if (decrypt(algorithm, mode, "encrypted", "decrypted"))
-    {
-        fprintf(stderr, "Failed to decrypt the file.\n");
-    }
-    */
 
     return return_status;
 }
