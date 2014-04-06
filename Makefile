@@ -1,7 +1,7 @@
 .PHONY: all, clean
 
 CC=gcc
-CFLAGS= -Wall -std=c11 -lgcrypt
+CFLAGS= -Wall -std=c11 -lgcrypt -largtable2
 
 default: pastor
 

@@ -1,4 +1,5 @@
 #include <gcrypt.h>
+#include <argtable2.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -11,6 +12,14 @@
 #define KEY_SIZE 16 // We use 128-bit key.
 
 char* key;
+
+int algorithm = GCRY_CIPHER_BLOWFISH;
+int mode = GCRY_CIPHER_MODE_ECB;
+struct arg_lit* generate;
+struct arg_end* end;
+struct arg_file* output_file;
+struct arg_str* domain;
+struct arg_str* import;
 
 /**
  * Initializes the libgcrypt library.
@@ -49,9 +58,29 @@ int init_libgcrypt()
 /**
  * Reads commandline options given.
  */
-int read_options(int argc, char** argv)
+int read_commandline(int argc, char** argv)
 {
-    return 1;
+    generate = arg_lit0("gG", "generate", "generate password");
+    import = arg_str0("iI", "import", "PASSWORD", "password to import");
+    domain = arg_strn(NULL, NULL, "DOMAIN", 1, 1, "domain");
+    output_file = arg_filen(NULL, NULL, "DATABASE", 1, 1, "database");
+    end = arg_end(20);
+    void* argtable[] = {generate, import, domain, output_file, end};
+
+    if (arg_nullcheck(argtable) != 0)
+    {
+        /* NULL entries were detected, some allocations must have failed */
+        printf("Insufficient memory.\n");
+        return 1;
+    }
+    if (arg_parse(argc, argv, argtable))
+    {
+        arg_print_syntaxv(stdout, argtable, " ");
+        printf("\n");
+        arg_print_errors(stdout, end,"myprog");
+        return 1;
+    }
+    return 0;
 }
 
 int get_key()
@@ -147,17 +176,29 @@ int decrypt(int algorithm, int mode, char* in, char* out)
     free(buffer);
     return 0;
 }
-/**
- * Main.
- */
+
+int generate_password()
+{
+    return 0;
+}
+
+int import_password()
+{
+    return 0;
+}
+
+int fetch_password()
+{
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
-    int algorithm = GCRY_CIPHER_BLOWFISH;
-    int mode = GCRY_CIPHER_MODE_ECB;
-
-#if DEBUG
-    printf("Starting execution.\n");
-#endif
+    int return_status = EXIT_SUCCESS;
+    if (read_commandline(argc, argv))
+    {
+        return EXIT_FAILURE;
+    }
 
     if (init_libgcrypt())
     {
@@ -171,6 +212,38 @@ int main(int argc, char** argv)
         fprintf(stderr, "Could not get the key.\n");
     }
 
+    if (generate->count > 0)
+    {
+#if DEBUG
+        printf("Generating new password for %s.\n", domain->sval[0]);
+#endif
+        if (generate_password())
+        {
+            return_status = EXIT_FAILURE;
+        }
+    }
+    else if (import->count > 0)
+    {
+#if DEBUG
+        printf("Importing password %s for %s.\n", import->sval[0], domain->sval[0]);
+#endif
+        if (import_password())
+        {
+            return_status = EXIT_FAILURE;
+        }
+    }
+    else
+    {
+        if (fetch_password())
+        {
+            return_status = EXIT_FAILURE;
+        }
+    }
+
+    free(key);
+    key = NULL;
+
+    /*
     if (encrypt(algorithm, mode, "pass.db", "encrypted"))
     {
         fprintf(stderr, "Failed to encrypt the file.\n");
@@ -179,9 +252,7 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "Failed to decrypt the file.\n");
     }
+    */
 
-    free(key);
-    key = NULL;
-
-    return EXIT_SUCCESS;
+    return return_status;
 }
