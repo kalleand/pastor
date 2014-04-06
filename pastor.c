@@ -110,7 +110,7 @@ int get_key()
     return 0;
 }
 
-int encrypt()
+int encrypt_database()
 {
     gcry_cipher_hd_t hd;
     FILE* fpout;
@@ -140,7 +140,7 @@ int encrypt()
     return 0;
 }
 
-int decrypt()
+int decrypt_database()
 {
     gcry_cipher_hd_t hd;
     FILE* fpin;
@@ -184,7 +184,7 @@ int import_password()
 
 int fetch_password()
 {
-    decrypt("old.pass.db");
+    decrypt_database();
     rewind(tmp_file);
     char tmp_buffer[1024];
     char* dom;
