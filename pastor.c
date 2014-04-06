@@ -259,7 +259,9 @@ int main(int argc, char** argv)
     }
     else
     {
+#if DEBUG
         printf("Fetching password for %s.\n", domain->sval[0]);
+#endif
         if (fetch_password())
         {
             return_status = EXIT_FAILURE;
