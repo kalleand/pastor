@@ -7,7 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define BUFFER_SIZE 16
 #define KEY_SIZE 16 // We use 128-bit key.
 
@@ -184,8 +184,6 @@ int import_password()
 
 int fetch_password()
 {
-    // Some debugging. TODO: Real stuff pls.
-    printf("Decrypting.\n");
     decrypt("old.pass.db");
     rewind(tmp_file);
     char tmp_buffer[1024];
