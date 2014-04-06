@@ -1,5 +1,5 @@
 # Executable
 pastor
 
-# Testfile
-pass.db
+# Databasefile
+*.db
