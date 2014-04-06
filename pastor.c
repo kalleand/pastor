@@ -7,7 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEBUG 0
+#define DEBUG 1
 #define BUFFER_SIZE 16
 #define KEY_SIZE 16 // We use 128-bit key.
 
@@ -63,14 +63,13 @@ int read_commandline(int argc, char** argv)
 {
     generate = arg_lit0("gG", "generate", "generate password");
     import = arg_str0("iI", "import", "PASSWORD", "password to import");
-    domain = arg_strn(NULL, NULL, "DOMAIN", 1, 1, "domain");
-    output_file = arg_filen(NULL, NULL, "DATABASE", 1, 1, "database");
+    domain = arg_str1(NULL, NULL, "DOMAIN", "domain");
+    output_file = arg_file1(NULL, NULL, "DATABASE", "database");
     end = arg_end(20);
     void* argtable[] = {generate, import, domain, output_file, end};
 
     if (arg_nullcheck(argtable) != 0)
     {
-        /* NULL entries were detected, some allocations must have failed */
         printf("Insufficient memory.\n");
         return 1;
     }
@@ -78,7 +77,7 @@ int read_commandline(int argc, char** argv)
     {
         arg_print_syntaxv(stdout, argtable, " ");
         printf("\n");
-        arg_print_errors(stdout, end,"myprog");
+        arg_print_errors(stdout, end, "pastor");
         return 1;
     }
     return 0;
