@@ -12,7 +12,6 @@
 #define KEY_SIZE 16 // We use 128-bit key.
 
 char* key;
-
 int algorithm = GCRY_CIPHER_BLOWFISH;
 int mode = GCRY_CIPHER_MODE_ECB;
 FILE* tmp_file;
@@ -95,14 +94,15 @@ int get_key()
     tcsetattr( STDIN_FILENO, TCSANOW, &newt);
 
     printf("Enter key: ");
-    while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE) {
+    while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE)
+    {
         key[i++] = c;
     }
 
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 
     printf("\n");
-    for(int it = 0; it < 1000; ++it)
+    for (int it = 0; it < 1000; ++it)
     {
         gcry_md_hash_buffer(GCRY_MD_MD5, key, key, 16);
     }
@@ -123,12 +123,14 @@ int encrypt_database()
     gcry_cipher_open(&hd, algorithm, mode, 0);
     gcry_cipher_setkey(hd, key, 16);
 
-    while(!feof(tmp_file))
+    while (!feof(tmp_file))
     {
+        memset(buffer, 0, BUFFER_SIZE);
         nr_bytes = fread(buffer, 1, BUFFER_SIZE, tmp_file);
-        if (!nr_bytes) break;
-        while(nr_bytes < BUFFER_SIZE)
-            buffer[nr_bytes++] = 0x0;
+        if (!nr_bytes)
+        {
+            break;
+        }
         gcry_cipher_encrypt(hd, buffer, BUFFER_SIZE, NULL, 0);
         fwrite(buffer, 1, BUFFER_SIZE, fpout);
     }
@@ -148,19 +150,27 @@ int decrypt_database()
     int nr_bytes;
 
     fpin = fopen(output_file->filename[0], "r");
+    if (!fpin)
+    {
+        printf("Database does not exist.\n");
+        return 1;
+    }
 
     gcry_cipher_open(&hd, algorithm, mode, 0);
     gcry_cipher_setkey(hd, key, 16);
 
-    while(!feof(fpin))
+    while (!feof(fpin))
     {
         nr_bytes = fread(buffer, 1, BUFFER_SIZE, fpin);
-        if (!nr_bytes) break;
+        if (!nr_bytes)
+        {
+            break;
+        }
         gcry_cipher_decrypt(hd, buffer, BUFFER_SIZE, NULL, 0);
         int bytes;
-        for(bytes = 0; bytes < BUFFER_SIZE; bytes++)
+        for (bytes = 0; bytes < BUFFER_SIZE; bytes++)
         {
-            if(buffer[bytes] == 0) break;
+            if (buffer[bytes] == 0) break;
         }
         fwrite(buffer, 1, bytes, tmp_file);
     }
@@ -171,6 +181,20 @@ int decrypt_database()
     return 0;
 }
 
+int check_valid_key()
+{
+    rewind(tmp_file);
+    char tmp_buffer[1024];
+    fgets(tmp_buffer, 1024, tmp_file);
+    strtok(tmp_buffer, " ");
+    if (strcmp(tmp_buffer, "pastor"))
+    {
+        return 1;
+    }
+    rewind(tmp_file);
+    return 0;
+}
+
 int generate_password()
 {
     return 0;
@@ -178,16 +202,51 @@ int generate_password()
 
 int import_password()
 {
+    int bytes;
+    char buffer[1024];
+    if (decrypt_database())
+    {
+        return 1;
+    }
+    sprintf(buffer, "\n%s %s", domain->sval[0], import->sval[0]);
+    for (bytes = 0; bytes < 1024; bytes++)
+    {
+        if (buffer[bytes] == 0) break;
+    }
+    fwrite(buffer, 1, bytes, tmp_file);
+    if (check_valid_key())
+    {
+        printf("Wrong key for database.\n");
+        return 1;
+    }
+
+    if (encrypt_database())
+    {
+        printf("Could not encrypt database.\n");
+        return 1;
+    }
     return 0;
 }
 
 int fetch_password()
 {
-    decrypt_database();
-    rewind(tmp_file);
     char tmp_buffer[1024];
     char* dom;
     char* pass;
+    int found = 0;
+
+    if (decrypt_database())
+    {
+        return 1;
+    }
+
+    if (check_valid_key())
+    {
+        printf("Wrong key for the database.\n");
+        return 1;
+    }
+    // Skip first row.
+    fgets(tmp_buffer, 1024, tmp_file);
 #if DEBUG
     printf("\n======\nFile contents:\n");
 #endif
@@ -195,18 +254,61 @@ int fetch_password()
     {
         dom = strtok(tmp_buffer, " ");
         pass = strtok(NULL, " ");
+
+        // Removes the newline.
+        for (int i = 0; i < 512; ++i)
+        {
+            if (pass[i] == '\n')
+            {
+                pass[i] = 0;
+                break;
+            }
+            else if (pass[i] == 0)
+            {
+                break;
+            }
+        }
+
 #if DEBUG
         printf("\n<DEBUG> Domain: %s\n", dom);
         printf("<DEBUG> Password: %s\n", pass);
 #endif
         if (!strcmp(dom, domain->sval[0]))
         {
-            printf("Password: %s\n", pass);
+            found = 1;
+            break;
         }
     }
 #if DEBUG
     printf("======\n");
 #endif
+    if (found)
+    {
+        printf("Password: %s\n", pass);
+    }
+    else
+    {
+        printf("Could not find password.\n");
+    }
+    return 0;
+}
+
+int create_new_database()
+{
+    int bytes;
+    char buffer[1024];
+    srand(time(NULL));
+    int random = rand();
+
+    sprintf(buffer, "%s %d", "pastor", random);
+
+    for (bytes = 0; bytes < 1024; bytes++)
+    {
+        if (buffer[bytes] == 0) break;
+    }
+
+    fwrite(buffer, 1, bytes, tmp_file);
+
     return 0;
 }
 
@@ -230,7 +332,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "Could not get the key.\n");
     }
 
-    // Create tmp_file. TODO: make implementation better.
+    // TODO: make implementation better (not use tmpfile).
     tmp_file = tmpfile();
 
     if (generate->count > 0)
