@@ -7,7 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define BUFFER_SIZE 16
 #define KEY_SIZE 16 // We use 128-bit key.
 #define VERSION "0.1-dev"
@@ -59,6 +59,9 @@ int init_libgcrypt()
     return 0;
 }
 
+/**
+ * Prompts the user for the key to decrypt the database.
+ */
 int get_key()
 {
     struct termios oldt, newt;
@@ -89,6 +92,10 @@ int get_key()
     return 0;
 }
 
+/**
+ * Encrypts the database specified with the key. Reads from the tmp_file and
+ * writes to the database.
+ */
 int encrypt_database()
 {
     gcry_cipher_hd_t hd;
@@ -121,6 +128,9 @@ int encrypt_database()
     return 0;
 }
 
+/**
+ * Decrypts the database and stores it in plain_text in the tmp_file.
+ */
 int decrypt_database()
 {
     gcry_cipher_hd_t hd;
@@ -161,6 +171,12 @@ int decrypt_database()
     return 0;
 }
 
+/**
+ * Each database should have a header row where the first word should be
+ * "pastor" followed by a space and then a random number. The random number
+ * ensures a different encrypted value for each database - even when they are
+ * empty.
+ */
 int check_valid_key()
 {
     rewind(tmp_file);
@@ -175,12 +191,20 @@ int check_valid_key()
     return 0;
 }
 
+/**
+ * Generates a new password for the specified domain.
+ *
+ * NOT YET IMPLEMENTED.
+ */
 int generate_password()
 {
     printf("Not yet implemented.\n");
     return 1;
 }
 
+/**
+ * Imports a password to the database.
+ */
 int import_password()
 {
     int bytes;
@@ -209,6 +233,10 @@ int import_password()
     return 0;
 }
 
+/**
+ * Retrieves the password for the domain specified by the options to the
+ * program.
+ */
 int fetch_password()
 {
     char tmp_buffer[1024];
@@ -274,6 +302,9 @@ int fetch_password()
     return 0;
 }
 
+/**
+ * Creates a new empty database with a correct header.
+ */
 int create_new_database()
 {
     int bytes;
@@ -297,6 +328,10 @@ int create_new_database()
     return 0;
 }
 
+/**
+ * Main method. Parses input and then executes the desired action by passing to
+ * appropriate method.
+ */
 int main(int argc, char** argv)
 {
     int return_status = EXIT_SUCCESS;
