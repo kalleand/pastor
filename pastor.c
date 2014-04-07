@@ -10,12 +10,16 @@
 #define DEBUG 1
 #define BUFFER_SIZE 16
 #define KEY_SIZE 16 // We use 128-bit key.
+#define VERSION "0.1-dev"
 
 char* key;
 int algorithm = GCRY_CIPHER_BLOWFISH;
 int mode = GCRY_CIPHER_MODE_ECB;
 FILE* tmp_file;
 struct arg_lit* generate;
+struct arg_lit* help;
+struct arg_lit* version;
+struct arg_lit* create_new;
 struct arg_end* end;
 struct arg_file* output_file;
 struct arg_str* domain;
@@ -55,38 +59,14 @@ int init_libgcrypt()
     return 0;
 }
 
-/**
- * Reads commandline options given.
- */
-int read_commandline(int argc, char** argv)
-{
-    generate = arg_lit0("gG", "generate", "generate password");
-    import = arg_str0("iI", "import", "PASSWORD", "password to import");
-    domain = arg_str1(NULL, NULL, "DOMAIN", "domain");
-    output_file = arg_file1(NULL, NULL, "DATABASE", "database");
-    end = arg_end(20);
-    void* argtable[] = {generate, import, domain, output_file, end};
-
-    if (arg_nullcheck(argtable) != 0)
-    {
-        printf("Insufficient memory.\n");
-        return 1;
-    }
-    if (arg_parse(argc, argv, argtable))
-    {
-        arg_print_syntaxv(stdout, argtable, " ");
-        printf("\n");
-        arg_print_errors(stdout, end, "pastor");
-        return 1;
-    }
-    return 0;
-}
-
 int get_key()
 {
     struct termios oldt, newt;
     int i = 0;
     int c;
+
+    key = malloc(sizeof(char) * 16);
+    memset(key, 0, KEY_SIZE);
 
     tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
@@ -197,7 +177,8 @@ int check_valid_key()
 
 int generate_password()
 {
-    return 0;
+    printf("Not yet implemented.\n");
+    return 1;
 }
 
 int import_password()
@@ -308,6 +289,10 @@ int create_new_database()
     }
 
     fwrite(buffer, 1, bytes, tmp_file);
+    if (encrypt_database())
+    {
+        return 1;
+    }
 
     return 0;
 }
@@ -315,60 +300,141 @@ int create_new_database()
 int main(int argc, char** argv)
 {
     int return_status = EXIT_SUCCESS;
-    if (read_commandline(argc, argv))
-    {
-        return EXIT_FAILURE;
-    }
+
+    version     = arg_lit0(NULL, "version", "print version");
+    help        = arg_lit0("hH", "help", "prints help");
+    create_new  = arg_lit0("cC", "create", "create new database");
+    generate    = arg_lit0("gG", "generate", "generate password");
+    import      = arg_str0("iI", "import", "PASSWORD", "password to import");
+    domain      = arg_str0(NULL, NULL, "DOMAIN", "domain");
+    output_file = arg_file0(NULL, NULL, "DATABASE", "database");
+    end         = arg_end(20);
+
+    void* argtable[] = {version, help, create_new, generate, import,
+        output_file, domain, end};
 
     if (init_libgcrypt())
     {
-        return EXIT_FAILURE;
+        return_status = EXIT_FAILURE;
     }
-
-    key = malloc(sizeof(char) * 16);
-    memset(key, 0, KEY_SIZE);
-    if (get_key())
+    else if (arg_nullcheck(argtable) != 0)
     {
-        fprintf(stderr, "Could not get the key.\n");
+        printf("Insufficient memory.\n");
+        return_status = EXIT_FAILURE;
     }
-
-    // TODO: make implementation better (not use tmpfile).
-    tmp_file = tmpfile();
-
-    if (generate->count > 0)
+    else if (arg_parse(argc, argv, argtable))
+    {
+        arg_print_syntaxv(stdout, argtable, " ");
+        printf("\n");
+        arg_print_errors(stdout, end, "pastor");
+        return_status = EXIT_FAILURE;
+    }
+    else if (help->count > 0)
+    {
+        printf("Synopsis:\n");
+        arg_print_syntaxv(stdout, argtable, " ");
+        printf("\n\n");
+        arg_print_glossary(stdout, argtable, " %-25s %s\n");
+        return_status = EXIT_SUCCESS;
+    }
+    else if (version->count > 0)
+    {
+        printf("Pastor version %s.\n", VERSION);
+        return_status = EXIT_SUCCESS;
+    }
+    else if (generate->count > 0 && output_file->count > 0 &&
+            domain->count > 0)
     {
 #if DEBUG
         printf("Generating new password for %s.\n", domain->sval[0]);
 #endif
+        if (get_key())
+        {
+            fprintf(stderr, "Could not get the key.\n");
+        }
+
+        tmp_file = tmpfile();
+
         if (generate_password())
         {
             return_status = EXIT_FAILURE;
         }
+        fclose(tmp_file);
+        free(key);
+        key = NULL;
     }
-    else if (import->count > 0)
+    else if (import->count > 0 && output_file->count > 0 &&
+            domain->count > 0)
     {
 #if DEBUG
-        printf("Importing password %s for %s.\n", import->sval[0], domain->sval[0]);
+        printf("Importing password %s for %s.\n", import->sval[0],
+                domain->sval[0]);
 #endif
+        if (get_key())
+        {
+            fprintf(stderr, "Could not get the key.\n");
+        }
+
+        tmp_file = tmpfile();
+
         if (import_password())
         {
             return_status = EXIT_FAILURE;
         }
+        fclose(tmp_file);
+        free(key);
+        key = NULL;
     }
-    else
+    else if (create_new->count > 0 && output_file->count > 0)
+    {
+        if (get_key())
+        {
+            fprintf(stderr, "Could not get the key.\n");
+        }
+
+        tmp_file = tmpfile();
+
+        if (create_new_database())
+        {
+            return_status = EXIT_FAILURE;
+        }
+
+        fclose(tmp_file);
+        free(key);
+        key = NULL;
+    }
+    else if (output_file->count > 0 && domain->count > 0)
     {
 #if DEBUG
         printf("Fetching password for %s.\n", domain->sval[0]);
 #endif
+        if (get_key())
+        {
+            fprintf(stderr, "Could not get the key.\n");
+        }
+
+        tmp_file = tmpfile();
+
         if (fetch_password())
         {
             return_status = EXIT_FAILURE;
         }
+
+        fclose(tmp_file);
+        free(key);
+        key = NULL;
+    }
+    else
+    {
+        printf("Could not find the action desired.\n");
+        printf("Synopsis:\n");
+        arg_print_syntaxv(stdout, argtable, " ");
+        printf("\n\n");
+        arg_print_glossary(stdout, argtable, " %-25s %s\n");
+        return_status = EXIT_FAILURE;
     }
 
-    free(key);
-    fclose(tmp_file);
-    key = NULL;
+    arg_freetable(argtable, sizeof(argtable)/sizeof(argtable[0]));
 
     return return_status;
 }
