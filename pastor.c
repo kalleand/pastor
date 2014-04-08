@@ -28,7 +28,7 @@ struct arg_str* import;
 /**
  * Initializes the libgcrypt library.
  *
- * Returns 0 on sucess and 1 on error.
+ * Returns 0 on success and 1 on error.
  */
 int init_libgcrypt()
 {
@@ -337,12 +337,12 @@ int main(int argc, char** argv)
     int return_status = EXIT_SUCCESS;
 
     version     = arg_lit0(NULL, "version", "print version");
-    help        = arg_lit0("hH", "help", "prints help");
+    help        = arg_lit0("hH", "help", "print help");
     create_new  = arg_lit0("cC", "create", "create new database");
     generate    = arg_lit0("gG", "generate", "generate password");
-    import      = arg_str0("iI", "import", "PASSWORD", "password to import");
-    domain      = arg_str0(NULL, NULL, "DOMAIN", "domain");
+    import      = arg_str0("iI", "import", "PASSWORD", "import password");
     output_file = arg_file0(NULL, NULL, "DATABASE", "database");
+    domain      = arg_str0(NULL, NULL, "DOMAIN", "domain");
     end         = arg_end(20);
 
     void* argtable[] = {version, help, create_new, generate, import,
@@ -352,7 +352,7 @@ int main(int argc, char** argv)
     {
         return_status = EXIT_FAILURE;
     }
-    else if (arg_nullcheck(argtable) != 0)
+    else if (arg_nullcheck(argtable))
     {
         printf("Insufficient memory.\n");
         return_status = EXIT_FAILURE;
@@ -461,7 +461,7 @@ int main(int argc, char** argv)
     }
     else
     {
-        printf("Could not find the action desired.\n");
+        printf("Could not find the desired action.\n");
         printf("Synopsis:\n");
         arg_print_syntaxv(stdout, argtable, " ");
         printf("\n\n");
