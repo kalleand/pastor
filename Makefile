@@ -2,11 +2,15 @@
 
 CC=gcc
 CFLAGS= -Wall -std=c11 -lgcrypt -largtable2
+PROGRAM_NAME=pastor
 
-default: pastor
+default: $(PROGRAM_NAME)
 
-pastor: pastor.c
+$(PROGRAM_NAME): $(PROGRAM_NAME).c
+	$(CC) $(CFLAGS) $< -o $@
+
+%.o: %.c
 	$(CC) $(CFLAGS) $< -o $@
 
 clean:
-	rm pastor
+	rm $(PROGRAM_NAME)

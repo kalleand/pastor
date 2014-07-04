@@ -3,3 +3,6 @@ pastor
 
 # Databasefile
 *.db
+
+# Vim specific for YCM.
+.ycm_extra_conf.pyc
