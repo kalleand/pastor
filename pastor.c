@@ -7,12 +7,14 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define BUFFER_SIZE 16
 #define KEY_SIZE 16 // We use 128-bit key.
 #define VERSION "0.1-dev"
 #define MIN_LENGTH 48
 #define MAX_LENGTH 64
+#define NO_DIGIT_FLAG 0b01
+#define NO_SPECIAL_CHARACTER_FLAG 0b10
 
 // The key which are used for symmetrical encryption/decryption
 char* key;
@@ -31,7 +33,6 @@ struct arg_lit* generate;
 struct arg_lit* help;
 struct arg_lit* version;
 struct arg_lit* create_new;
-struct arg_end* end;
 struct arg_file* output_file;
 struct arg_str* domain;
 struct arg_str* import;
@@ -42,6 +43,9 @@ struct arg_int* number_of_uppercase;
 struct arg_int* number_of_lowercase;
 struct arg_int* number_of_digits;
 struct arg_int* number_of_special_characters;
+struct arg_lit* no_digits;
+struct arg_lit* no_special_characters;
+struct arg_end* end;
 
 /**
  * Initializes the libgcrypt library.
@@ -210,9 +214,32 @@ int check_valid_key()
 }
 
 /**
+ * Assigns the characters available in available_chars to empty slots in
+ * password number_of_times number of times.
+ *
+ * It accomplish this through randomizing an index and then taking the next
+ * unused slot after this index. This does make unused slot right next to an
+ * used slot have a twice as high chance of getting assigned. This is deemed ok
+ * to make the algorithm run in O(n).
+ *
+ * Another approach would be to fill the password and then scramble it.
+ */
+void assign_required(char* password, int password_length,
+        char* available_chars, int number_of_times)
+{
+    int available_chars_length = strlen(available_chars);
+    for (int i = 0; i < number_of_times; i++)
+    {
+        int index = rand() % password_length;
+        while (password[(++index) % password_length] != '\0');
+        index %= password_length;
+        password[index] = available_chars[rand() % available_chars_length];
+    }
+}
+
+/**
  * Generates a new password for the specified domain.
  *
- * NOT YET IMPLEMENTED.
  */
 int generate_password(int min_size,
         int max_size,
@@ -221,75 +248,151 @@ int generate_password(int min_size,
         int number_of_digits,
         int number_of_special_characters,
         int len_of_special_chars,
-        char* input_special_characters)
+        char* input_special_characters,
+        int flag)
 {
+    if ((flag & NO_DIGIT_FLAG && number_of_digits > 0) ||
+            (flag & NO_SPECIAL_CHARACTER_FLAG &&
+             number_of_special_characters > 0))
+    {
+        fprintf(stderr, "Input to generate password does not make any sense, "
+                "digits or special characters cannot be both disallowed and "
+                "required.\n");
+        return 1;
+    }
     srand(time(NULL));
 
-    // Planning.
-    //
-    // Define the allowed characters.
-    //  * a-zA-Z0-9 - are given
-    //  * !"#$%&/()[]={}?+-_'`^~'*@£€ - should be alright
-    //  * åäöÅÄÖéèíìÌÍÈÉ - now it's getting fishy.
-    //  TODO: Find all the characters allowed in passwords.
-    //  TODO: Implement a way to set a maximum and minimum size of password.
-    //        ^ Through flags e.g. -min=8 -max=16
-    //  TODO: Implement a way to specify which characters are allowed.
-    //        ^ This should be done through flags.
-    //          e.g. -nodigits -nospecial
-    //  TODO: Ensure that there are certain number of digits, uppercase,
-    //        lowercase, and/or special characters
-    //
-    //  Then we construct a loop that iterates through an array with all the
-    //  characters that are allowed and randomize which password we generate.
-    //  TODO: How to get random data in a secure way? Does it matter _that_ much
-    //        if we use rand() as this happens once when the user requests it?
-    //        How do we seed the randomizer if that is the case?
-    char valid_characters[256];
-    char special_characters[256];
-    if (len_of_special_chars == -1)
+    char* valid_characters = calloc(512, sizeof(char));
+    char* special_characters = calloc(256, sizeof(char));
+    char* lowercase = calloc(27, sizeof(char));
+    char* uppercase = calloc(27, sizeof(char));
+    char* digits = calloc(11, sizeof(char));
+    strcpy(lowercase, "abcdefghijklmnopqrstuvwxyz");
+    strcpy(uppercase, "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    strcpy(digits, "0123456789");
+    if (len_of_special_chars < 1)
     {
-        strcpy(special_characters, "[](){}~&\"!?%/");
+        strcpy(special_characters, "<>[](){}~&\"!?%/");
+        len_of_special_chars = strlen(special_characters);
     }
     else if (len_of_special_chars < 256)
     {
-        strcpy(special_characters, input_special_characters);
+        strncpy(special_characters,
+                input_special_characters,
+                len_of_special_chars);
     }
     else
     {
-        fprintf(stderr, "Too long array of special characters.\n");
+        fprintf(stderr, "Too long array of special characters.\nThere is a"
+                "limit of 255 special characters(+ NULL).");
+        free(valid_characters);
+        free(special_characters);
+        free(lowercase);
+        free(uppercase);
+        free(digits);
+        return 1;
     }
 
-    strcpy(valid_characters, "abcdefghijklmnopqrstuwxyzABCDEFGHIJKLMNOPQRSTUWXYZ0123456789");
-    strcat(valid_characters, special_characters);
+    strcpy(valid_characters, lowercase);
+    strcat(valid_characters, uppercase);
+    if (!(flag & NO_DIGIT_FLAG))
+    {
+        strcat(valid_characters, digits);
+    }
+    if (!(flag & NO_SPECIAL_CHARACTER_FLAG))
+    {
+        strncat(valid_characters, special_characters, len_of_special_chars);
+    }
 
-    int a = number_of_digits;
-    a = number_of_uppercase;
-    a = number_of_lowercase;
-    a = number_of_special_characters;
+    int total_requirement = number_of_digits + number_of_uppercase +
+                            number_of_lowercase + number_of_special_characters;
+    if (min_size == -1)
+    {
+        min_size = (total_requirement > MIN_LENGTH) ? total_requirement :
+            MIN_LENGTH;
+    }
+    else 
+    {
+        min_size = (total_requirement > min_size) ? total_requirement :
+            min_size;
+    }
+
+    if (max_size == -1)
+    {
+        max_size = (total_requirement > MAX_LENGTH) ? total_requirement :
+            MAX_LENGTH;
+    }
+
 
     int password_length = max_size - min_size;
-    password_length = min_size + (rand() % password_length);
-
-
-    // Find the length pf the valid characters  through iterating until '\0' is found.
-    int length = -1;
-    while (valid_characters[++length] != '\0') {}
-
-
-    char password[(password_length + 1)];
-    for(int i = 0; i < password_length; i++) {
-        char c = valid_characters[rand() % length];
-        password[i] = c;
+    if (password_length > 0)
+    {
+        password_length = min_size + (rand() % password_length);
+    }
+    else if (password_length == 0)
+    {
+        password_length = max_size;
+    }
+    else
+    {
+        fprintf(stderr, "Not enough characters in password for all requirements.\n");
+        free(valid_characters);
+        free(special_characters);
+        free(lowercase);
+        free(uppercase);
+        free(digits);
+        return 1;
     }
 
-    // Terminate the string with '\0' (NULL)
-    password[password_length] = '\0';
+    int length = strlen(valid_characters);
+
+    char* password = calloc(password_length + 1, sizeof(char));
+
+    assign_required(password, password_length, uppercase, number_of_uppercase);
+    assign_required(password, password_length, lowercase, number_of_lowercase);
+    assign_required(password, password_length, digits, number_of_digits);
+    assign_required(password, password_length, special_characters,
+            number_of_special_characters);
+
+    for(int i = 0; i < password_length; i++) {
+        if (password[i] == '\0')
+        {
+            char c = valid_characters[rand() % length];
+            password[i] = c;
+        }
+    }
 
 #if DEBUG
     printf("=DEBUG= Password: %s\n", password);
 #endif
 
+    int bytes;
+    char buffer[1024];
+    if (decrypt_database())
+    {
+        return 1;
+    }
+    sprintf(buffer, "\n%s %s", domain->sval[0], password);
+    bytes = strlen(buffer);
+    fwrite(buffer, 1, bytes, tmp_file);
+    if (check_valid_key())
+    {
+        printf("Wrong key for database.\n");
+        return 1;
+    }
+
+    if (encrypt_database())
+    {
+        printf("Could not encrypt database.\n");
+        return 1;
+    }
+
+    free(lowercase);
+    free(uppercase);
+    free(digits);
+    free(special_characters);
+    free(valid_characters);
+    free(password);
     return 0;
 }
 
@@ -305,10 +408,7 @@ int import_password()
         return 1;
     }
     sprintf(buffer, "\n%s %s", domain->sval[0], import->sval[0]);
-    for (bytes = 0; bytes < 1024; bytes++)
-    {
-        if (buffer[bytes] == 0) break;
-    }
+    bytes = strlen(buffer);
     fwrite(buffer, 1, bytes, tmp_file);
     if (check_valid_key())
     {
@@ -451,14 +551,19 @@ int main(int argc, char** argv)
                 = arg_int0(NULL, "number-of-digits", "NUMBER",
                         "required number of digits in password");
     number_of_special_characters
-                = arg_int0(NULL, "number-of-special-character", "NUMBER",
+                = arg_int0(NULL, "number-of-special-characters", "NUMBER",
                         "required number of special characters in password");
+    no_digits   = arg_lit0(NULL, "no-digits", "do not use digits in password");
+    no_special_characters
+                = arg_lit0(NULL, "no-special-characters",
+                        "do not use special characters in password");
     end         = arg_end(20);
 
     void* argtable[] = {version, help, create_new, generate,
                         allowed_special_characters, min, max,
                         number_of_uppercase, number_of_lowercase,
                         number_of_digits, number_of_special_characters,
+                        no_digits, no_special_characters,
                         import, output_file, domain, end};
 
     if (init_libgcrypt())
@@ -496,29 +601,26 @@ int main(int argc, char** argv)
 #if DEBUG
         printf("=DEBUG= Generating new password for %s.\n", domain->sval[0]);
 #endif
-        /* TODO: Uncomment
-        if (get_key())
-        {
-            fprintf(stderr, "Could not get the key.\n");
-        }
+        int min_pass_size, max_pass_size, required_lowercase,
+            required_uppercase, required_digits, required_special_characters,
+            len_of_special_chars, flag;
+        char* special_characters = NULL;
+
+        required_lowercase = required_uppercase = required_digits =
+            required_special_characters = flag = 0;
+        max_pass_size = min_pass_size = len_of_special_chars = -1;
 
         tmp_file = tmpfile();
-        */
-
-        int min_pass_size, max_pass_size, required_lowercase,
-            required_uppercase, required_digits, required_special_characters;
-        /*char special_characters[64];*/
-
-        min_pass_size = MIN_LENGTH;
-        max_pass_size = MAX_LENGTH;
-        required_lowercase = required_uppercase = required_digits =
-            required_special_characters = 0;
 
         if (min->count > 0) {
             min_pass_size = min->ival[0];
         }
         if (max->count > 0) {
             max_pass_size = max->ival[0];
+            if (min->count == 0)
+            {
+                min_pass_size = max_pass_size / 2;
+            }
         }
         if (number_of_uppercase->count > 0)
         {
@@ -536,7 +638,27 @@ int main(int argc, char** argv)
         {
             required_special_characters = number_of_special_characters->ival[0];
         }
+        if (allowed_special_characters->count > 0)
+        {
+            len_of_special_chars = strlen(allowed_special_characters->sval[0]);
+            special_characters = calloc(len_of_special_chars, sizeof(char));
+            memcpy(special_characters,
+                    allowed_special_characters->sval[0],
+                    len_of_special_chars * sizeof(char));
+        }
+        if (no_digits->count > 0)
+        {
+            flag |= NO_DIGIT_FLAG;
+        }
+        if (no_special_characters->count > 0)
+        {
+            flag |= NO_SPECIAL_CHARACTER_FLAG;
+        }
 
+        if (get_key())
+        {
+            fprintf(stderr, "Could not get the key.\n");
+        }
 
         if (generate_password(
                     min_pass_size,
@@ -545,16 +667,20 @@ int main(int argc, char** argv)
                     required_lowercase,
                     required_digits,
                     required_special_characters,
-                    -1,
-                    NULL))
+                    len_of_special_chars,
+                    special_characters,
+                    flag))
         {
             return_status = EXIT_FAILURE;
         }
-        /* TODO: Uncomment
+
+        if (len_of_special_chars != -1)
+        {
+            free(special_characters);
+        }
         fclose(tmp_file);
         free(key);
         key = NULL;
-        */
     }
     else if (import->count > 0 && output_file->count > 0 &&
             domain->count > 0)
