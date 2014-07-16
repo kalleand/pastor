@@ -1,7 +1,7 @@
 .PHONY: all, clean
 
 CC=gcc
-CFLAGS= -Wall -std=c11 -lgcrypt -largtable2
+CFLAGS= -Wall -Werror -std=c11 -lgcrypt -largtable2
 PROGRAM_NAME=pastor
 
 default: $(PROGRAM_NAME)

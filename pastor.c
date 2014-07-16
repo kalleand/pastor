@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <gcrypt.h>
 #include <argtable2.h>
 #include <stdio.h>
@@ -33,6 +35,7 @@ struct arg_lit* generate;
 struct arg_lit* help;
 struct arg_lit* version;
 struct arg_lit* create_new;
+struct arg_lit* force;
 struct arg_file* output_file;
 struct arg_str* domain;
 struct arg_str* import;
@@ -45,6 +48,7 @@ struct arg_int* number_of_digits;
 struct arg_int* number_of_special_characters;
 struct arg_lit* no_digits;
 struct arg_lit* no_special_characters;
+struct arg_str* database_password;
 struct arg_end* end;
 
 /**
@@ -59,7 +63,7 @@ int init_libgcrypt()
     if (!gcry_check_version(GCRYPT_VERSION))
     {
         fprintf(stderr, "Incompatible version of libgcrypt.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
 
     error = gcry_control(GCRYCTL_DISABLE_SECMEM, 0);
@@ -68,7 +72,7 @@ int init_libgcrypt()
         fprintf(stderr,
                 "Could not disable secure memory.\nError string: '%s'\n",
                 gcry_strerror(error));
-        return 1;
+        return EXIT_FAILURE;
     }
     error = gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
     if (error)
@@ -76,9 +80,9 @@ int init_libgcrypt()
         fprintf(stderr,
                 "Could not finish initializing memory.\nError string: '%s'\n",
                 gcry_strerror(error));
-        return 1;
+        return EXIT_FAILURE;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -86,32 +90,123 @@ int init_libgcrypt()
  */
 int get_key()
 {
-    struct termios oldt, newt;
-    int i = 0;
-    int c;
+    key = (char*) calloc(sizeof(char), KEY_SIZE);
 
-    key = (char*) malloc(sizeof(char) * 16);
-    memset(key, 0, KEY_SIZE);
-
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ECHO);
-    tcsetattr( STDIN_FILENO, TCSANOW, &newt);
-
-    printf("Enter key: ");
-    while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE)
+    if (database_password->count > 0)
     {
-        key[i++] = c;
+        strncpy(key, database_password->sval[0], KEY_SIZE);
     }
+    else
+    {
+        struct termios oldt, newt;
+        int i = 0;
+        int c;
 
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        // Disables printing of password back to the user.
+        tcgetattr(STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~(ECHO);
+        tcsetattr( STDIN_FILENO, TCSANOW, &newt);
 
-    printf("\n");
+        printf("Enter key: ");
+        while ((c = getchar()) != '\n' && c != EOF && i < KEY_SIZE)
+        {
+            key[i++] = c;
+        }
+
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+
+        printf("\n");
+    }
     for (int it = 0; it < 1000; ++it)
     {
-        gcry_md_hash_buffer(GCRY_MD_MD5, key, key, 16);
+        gcry_md_hash_buffer(GCRY_MD_MD5, key, key, KEY_SIZE);
     }
-    return 0;
+    return EXIT_SUCCESS;
+}
+
+int add_to_database(const char* domain, const char* password)
+{
+    ssize_t nr_bytes = -1;
+    size_t len;
+    char* line = NULL;
+    const char delim = ' ';
+    FILE * updated_database = tmpfile();
+    char tmp_buffer[512];
+    int added = 0;
+
+    rewind(tmp_file);
+
+    // Reads the first line and chacks that the file is accesible.
+    if ((nr_bytes = getline(&line, &len, tmp_file)) == -1)
+    {
+        fprintf(stderr, "Error reading file.\nThis should not happen.\n");
+        return 1;
+    }
+    else
+    {
+        fwrite(line , sizeof(char), strlen(line), updated_database);
+    }
+
+    while ((nr_bytes = getline(&line, &len, tmp_file)) != -1)
+    {
+        char line_cpy[512];
+        strncpy(line_cpy, line, strlen(line));
+        char* tmp_domain = strtok(line_cpy, &delim);
+        int cmp = added ? -1 : strcmp(tmp_domain, domain);
+        if (cmp == 0)
+        {
+            if (!(force->count))
+            {
+                printf("Password for domain already in database."
+                        "Replace it? [Y/n] ");
+                int character = fgetc(stdin);
+                if (character == 'n' || character == 'N')
+                {
+                    added = 1;
+                    fwrite(line , sizeof(char), strlen(line), updated_database);
+                    break;
+                }
+            }
+
+            if (!added)
+            {
+                added = 1;
+                if (line[strlen(line) - 1] == '\n')
+                {
+                    sprintf(tmp_buffer, "%s %s\n", domain, password);
+                }
+                else
+                {
+                    sprintf(tmp_buffer, "%s %s", domain, password);
+                }
+                fwrite(tmp_buffer, sizeof(char), strlen(tmp_buffer),
+                        updated_database);
+            }
+        }
+        else if (cmp > 0)
+        {
+            added = 1;
+            sprintf(tmp_buffer, "%s %s\n", domain, password);
+            fwrite(tmp_buffer, sizeof(char), strlen(tmp_buffer), updated_database);
+            fwrite(line , sizeof(char), strlen(line), updated_database);
+        }
+        else
+        {
+            fwrite(line , sizeof(char), strlen(line), updated_database);
+        }
+    }
+
+    if (!added)
+    {
+        sprintf(tmp_buffer, "\n%s %s", domain, password);
+        fwrite(tmp_buffer, sizeof(char), strlen(tmp_buffer), updated_database);
+    }
+
+    fclose(tmp_file);
+    tmp_file = updated_database;
+
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -122,9 +217,8 @@ int encrypt_database()
 {
     gcry_cipher_hd_t hd;
     FILE* fpout;
-    char* buffer = (char*) malloc(BUFFER_SIZE);
+    char* buffer = calloc(sizeof(char), BUFFER_SIZE);
     int nr_bytes = 0;
-    memset(buffer, 0, BUFFER_SIZE);
 
     fpout = fopen(output_file->filename[0], "w");
     rewind(tmp_file);
@@ -201,8 +295,8 @@ int decrypt_database()
  */
 int check_valid_key()
 {
-    rewind(tmp_file);
     char tmp_buffer[1024];
+    rewind(tmp_file);
     fgets(tmp_buffer, 1024, tmp_file);
     strtok(tmp_buffer, " ");
     if (strcmp(tmp_buffer, "pastor"))
@@ -210,6 +304,37 @@ int check_valid_key()
         return 1;
     }
     rewind(tmp_file);
+    return 0;
+}
+
+/**
+ * Imports a password to the database.
+ */
+int import_password(const char * domain, const char* password)
+{
+    if (decrypt_database())
+    {
+        return 1;
+    }
+    /*sprintf(buffer, "\n%s %s", domain->sval[0], import->sval[0]);*/
+    /*bytes = strlen(buffer);*/
+    /*fwrite(buffer, 1, bytes, tmp_file);*/
+    if (check_valid_key())
+    {
+        fprintf(stderr, "Wrong key for database.\n");
+        return 1;
+    }
+
+    if (add_to_database(domain, password))
+    {
+        fprintf(stderr, "Could not add password to database.\n");
+    }
+
+    if (encrypt_database())
+    {
+        fprintf(stderr, "Could not encrypt database.\n");
+        return 1;
+    }
     return 0;
 }
 
@@ -311,7 +436,7 @@ int generate_password(int min_size,
         min_size = (total_requirement > MIN_LENGTH) ? total_requirement :
             MIN_LENGTH;
     }
-    else 
+    else
     {
         min_size = (total_requirement > min_size) ? total_requirement :
             min_size;
@@ -366,26 +491,7 @@ int generate_password(int min_size,
     printf("=DEBUG= Password: %s\n", password);
 #endif
 
-    int bytes;
-    char buffer[1024];
-    if (decrypt_database())
-    {
-        return 1;
-    }
-    sprintf(buffer, "\n%s %s", domain->sval[0], password);
-    bytes = strlen(buffer);
-    fwrite(buffer, 1, bytes, tmp_file);
-    if (check_valid_key())
-    {
-        printf("Wrong key for database.\n");
-        return 1;
-    }
-
-    if (encrypt_database())
-    {
-        printf("Could not encrypt database.\n");
-        return 1;
-    }
+    import_password(domain->sval[0], password);
 
     free(lowercase);
     free(uppercase);
@@ -393,34 +499,6 @@ int generate_password(int min_size,
     free(special_characters);
     free(valid_characters);
     free(password);
-    return 0;
-}
-
-/**
- * Imports a password to the database.
- */
-int import_password()
-{
-    int bytes;
-    char buffer[1024];
-    if (decrypt_database())
-    {
-        return 1;
-    }
-    sprintf(buffer, "\n%s %s", domain->sval[0], import->sval[0]);
-    bytes = strlen(buffer);
-    fwrite(buffer, 1, bytes, tmp_file);
-    if (check_valid_key())
-    {
-        printf("Wrong key for database.\n");
-        return 1;
-    }
-
-    if (encrypt_database())
-    {
-        printf("Could not encrypt database.\n");
-        return 1;
-    }
     return 0;
 }
 
@@ -434,6 +512,7 @@ int fetch_password()
     char* dom;
     char* pass;
     int found = 0;
+    int cmp;
 
     if (decrypt_database())
     {
@@ -456,26 +535,34 @@ int fetch_password()
         pass = strtok(NULL, " ");
 
         // Removes the newline.
-        for (int i = 0; i < 512; ++i)
+        if (pass[strlen(pass) - 1] == '\n')
         {
-            if (pass[i] == '\n')
-            {
-                pass[i] = 0;
-                break;
-            }
-            else if (pass[i] == 0)
-            {
-                break;
-            }
+            pass[strlen(pass) - 1] = '\0';
         }
+        /*for (int i = 0; i < 512; ++i)*/
+        /*{*/
+            /*if (pass[i] == '\n')*/
+            /*{*/
+                /*pass[i] = 0;*/
+                /*break;*/
+            /*}*/
+            /*else if (pass[i] == 0)*/
+            /*{*/
+                /*break;*/
+            /*}*/
+        /*}*/
 
 #if DEBUG
         printf("\n=DEBUG= Domain: %s\n", dom);
         printf("=DEBUG= Password: %s\n", pass);
 #endif
-        if (!strcmp(dom, domain->sval[0]))
+        if (!(cmp = strcmp(dom, domain->sval[0])))
         {
             found = 1;
+            break;
+        }
+        else if (cmp > 0)
+        {
             break;
         }
     }
@@ -484,11 +571,11 @@ int fetch_password()
 #endif
     if (found)
     {
-        printf("Password: %s\n", pass);
+        printf("%s\n", pass);
     }
     else
     {
-        printf("Could not find password.\n");
+        fprintf(stderr, "Could not find password.\n");
     }
     return 0;
 }
@@ -511,6 +598,7 @@ int create_new_database()
     }
 
     fwrite(buffer, 1, bytes, tmp_file);
+    printf("Printing to file.\n");
     if (encrypt_database())
     {
         return 1;
@@ -531,6 +619,7 @@ int main(int argc, char** argv)
     help        = arg_lit0("hH", "help", "print help");
     create_new  = arg_lit0("cC", "create", "create new database");
     generate    = arg_lit0("gG", "generate", "generate password");
+    force       = arg_lit0("fF", "force", "force updating of password");
     import      = arg_str0("iI", "import", "PASSWORD", "import password");
     output_file = arg_file0(NULL, NULL, "DATABASE", "database");
     domain      = arg_str0(NULL, NULL, "DOMAIN", "domain");
@@ -557,14 +646,16 @@ int main(int argc, char** argv)
     no_special_characters
                 = arg_lit0(NULL, "no-special-characters",
                         "do not use special characters in password");
+    database_password
+                = arg_str0("pP", "password", "PASSWORD",
+                        "password to the datbase");
     end         = arg_end(20);
 
-    void* argtable[] = {version, help, create_new, generate,
-                        allowed_special_characters, min, max,
-                        number_of_uppercase, number_of_lowercase,
-                        number_of_digits, number_of_special_characters,
-                        no_digits, no_special_characters,
-                        import, output_file, domain, end};
+    void* argtable[] = {version, help, create_new, generate, force,
+        allowed_special_characters, min, max, number_of_uppercase,
+        number_of_lowercase, number_of_digits, number_of_special_characters,
+        no_digits, no_special_characters, import, output_file,
+        database_password, domain, end};
 
     if (init_libgcrypt())
     {
@@ -696,7 +787,7 @@ int main(int argc, char** argv)
 
         tmp_file = tmpfile();
 
-        if (import_password())
+        if (import_password(domain->sval[0], import->sval[0]))
         {
             return_status = EXIT_FAILURE;
         }
