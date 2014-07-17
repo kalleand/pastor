@@ -86,6 +86,25 @@ int init_libgcrypt()
 }
 
 /**
+ * Finds the domain from the URL.
+ *
+ * The input char pointer is used to parse away the protocol and the parameters.
+ * This way https://www.google.com/blabla?blabla is parsed as www.google.com
+ */
+int get_domain(const char* domain, char* out_domain)
+{
+    char protocol[64];
+
+    if ((sscanf(domain, "%[^/]//%[^/]", protocol, out_domain)) == EOF
+            || !(strcmp(out_domain, "")))
+    {
+        fprintf(stderr, "Could not find the domain from %s.\n", domain);
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+}
+
+/**
  * Prompts the user for the key to decrypt the database.
  */
 int get_key()
@@ -316,24 +335,30 @@ int import_password(const char * domain, const char* password)
     {
         return 1;
     }
-    /*sprintf(buffer, "\n%s %s", domain->sval[0], import->sval[0]);*/
-    /*bytes = strlen(buffer);*/
-    /*fwrite(buffer, 1, bytes, tmp_file);*/
+
     if (check_valid_key())
     {
         fprintf(stderr, "Wrong key for database.\n");
         return 1;
     }
 
-    if (add_to_database(domain, password))
+    char trimmed_domain[128];
+    if (get_domain(domain, trimmed_domain))
+    {
+        fprintf(stderr, "Could not find the domain from %s.\n", domain);
+        return EXIT_FAILURE;
+    }
+
+    if (add_to_database(trimmed_domain, password))
     {
         fprintf(stderr, "Could not add password to database.\n");
+        return EXIT_FAILURE;
     }
 
     if (encrypt_database())
     {
         fprintf(stderr, "Could not encrypt database.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
     return 0;
 }
@@ -513,6 +538,9 @@ int fetch_password()
     char* pass;
     int found = 0;
     int cmp;
+    char trimmed_domain[128];
+
+    get_domain(domain->sval[0], trimmed_domain);
 
     if (decrypt_database())
     {
@@ -539,24 +567,12 @@ int fetch_password()
         {
             pass[strlen(pass) - 1] = '\0';
         }
-        /*for (int i = 0; i < 512; ++i)*/
-        /*{*/
-            /*if (pass[i] == '\n')*/
-            /*{*/
-                /*pass[i] = 0;*/
-                /*break;*/
-            /*}*/
-            /*else if (pass[i] == 0)*/
-            /*{*/
-                /*break;*/
-            /*}*/
-        /*}*/
 
 #if DEBUG
         printf("\n=DEBUG= Domain: %s\n", dom);
         printf("=DEBUG= Password: %s\n", pass);
 #endif
-        if (!(cmp = strcmp(dom, domain->sval[0])))
+        if (!(cmp = strcmp(dom, trimmed_domain)))
         {
             found = 1;
             break;
