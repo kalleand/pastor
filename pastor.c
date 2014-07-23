@@ -93,9 +93,14 @@ int init_libgcrypt()
  */
 int get_domain(const char* domain, char* out_domain)
 {
-    char protocol[64];
+    char* protocol = strstr(domain, "//");
 
-    if ((sscanf(domain, "%[^/]//%[^/]", protocol, out_domain)) == EOF
+    if (protocol == NULL)
+    {
+        fprintf(stderr, "Malformed domain. Could not find the protocol.\n");
+        return EXIT_FAILURE;
+    }
+    if ((sscanf(protocol, "//%[^/]", out_domain)) == EOF
             || !(strcmp(out_domain, "")))
     {
         fprintf(stderr, "Could not find the domain from %s.\n", domain);
@@ -142,6 +147,26 @@ int get_key()
         gcry_md_hash_buffer(GCRY_MD_MD5, key, key, KEY_SIZE);
     }
     return EXIT_SUCCESS;
+}
+
+int init()
+{
+    if (get_key())
+    {
+        fprintf(stderr, "Could not get the key.\n");
+        return EXIT_FAILURE;
+    }
+
+    tmp_file = tmpfile();
+
+    return EXIT_SUCCESS;
+}
+
+void clean_up()
+{
+    fclose(tmp_file);
+    free(key);
+    key = NULL;
 }
 
 int add_to_database(const char* domain, const char* password)
@@ -333,13 +358,13 @@ int import_password(const char * domain, const char* password)
 {
     if (decrypt_database())
     {
-        return 1;
+        return EXIT_FAILURE;
     }
 
     if (check_valid_key())
     {
         fprintf(stderr, "Wrong key for database.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
 
     char trimmed_domain[128];
@@ -360,7 +385,7 @@ int import_password(const char * domain, const char* password)
         fprintf(stderr, "Could not encrypt database.\n");
         return EXIT_FAILURE;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -401,6 +426,11 @@ int generate_password(int min_size,
         char* input_special_characters,
         int flag)
 {
+    if (init())
+    {
+        return EXIT_FAILURE;
+    }
+
     if ((flag & NO_DIGIT_FLAG && number_of_digits > 0) ||
             (flag & NO_SPECIAL_CHARACTER_FLAG &&
              number_of_special_characters > 0))
@@ -524,6 +554,7 @@ int generate_password(int min_size,
     free(special_characters);
     free(valid_characters);
     free(password);
+    clean_up();
     return 0;
 }
 
@@ -533,6 +564,11 @@ int generate_password(int min_size,
  */
 int fetch_password()
 {
+    if (init())
+    {
+        return EXIT_FAILURE;
+    }
+
     char tmp_buffer[1024];
     char* dom;
     char* pass;
@@ -544,13 +580,13 @@ int fetch_password()
 
     if (decrypt_database())
     {
-        return 1;
+        return EXIT_FAILURE;
     }
 
     if (check_valid_key())
     {
         printf("Wrong key for the database.\n");
-        return 1;
+        return EXIT_FAILURE;
     }
     // Skip first row.
     fgets(tmp_buffer, 1024, tmp_file);
@@ -593,7 +629,10 @@ int fetch_password()
     {
         fprintf(stderr, "Could not find password.\n");
     }
-    return 0;
+
+    clean_up();
+
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -601,6 +640,10 @@ int fetch_password()
  */
 int create_new_database()
 {
+    if (init())
+    {
+        return EXIT_FAILURE;
+    }
     int bytes;
     char buffer[1024];
     srand(time(NULL));
@@ -614,23 +657,27 @@ int create_new_database()
     }
 
     fwrite(buffer, 1, bytes, tmp_file);
-    printf("Printing to file.\n");
+
     if (encrypt_database())
     {
-        return 1;
+        return EXIT_FAILURE;
     }
 
-    return 0;
+    clean_up();
+
+    return EXIT_SUCCESS;
 }
 
-/**
- * Main method. Parses input and then executes the desired action by passing to
- * appropriate method.
- */
-int main(int argc, char** argv)
+void print_help(void* argtable[])
 {
-    int return_status = EXIT_SUCCESS;
+    printf("Synopsis:\n");
+    arg_print_syntaxv(stdout, argtable, " ");
+    printf("\n\n");
+    arg_print_glossary(stdout, argtable, " %-50s %s\n");
+}
 
+void argtable_setup()
+{
     version     = arg_lit0(NULL, "version", "print version");
     help        = arg_lit0("hH", "help", "print help");
     create_new  = arg_lit0("cC", "create", "create new database");
@@ -666,12 +713,22 @@ int main(int argc, char** argv)
                 = arg_str0("pP", "password", "PASSWORD",
                         "password to the datbase");
     end         = arg_end(20);
+}
 
+/**
+ * Main method. Parses input and then executes the desired action by passing to
+ * appropriate method.
+ */
+int main(int argc, char** argv)
+{
+    int return_status = EXIT_SUCCESS;
+
+    argtable_setup();
     void* argtable[] = {version, help, create_new, generate, force,
         allowed_special_characters, min, max, number_of_uppercase,
         number_of_lowercase, number_of_digits, number_of_special_characters,
-        no_digits, no_special_characters, import, output_file,
-        database_password, domain, end};
+        no_digits, no_special_characters, import, database_password,
+        output_file, domain, end};
 
     if (init_libgcrypt())
     {
@@ -684,17 +741,13 @@ int main(int argc, char** argv)
     }
     else if (arg_parse(argc, argv, argtable))
     {
-        arg_print_syntaxv(stdout, argtable, " ");
-        printf("\n");
         arg_print_errors(stdout, end, "pastor");
+        printf("\nTry pastor -h for more information on available commands.\n");
         return_status = EXIT_FAILURE;
     }
     else if (help->count > 0)
     {
-        printf("Synopsis:\n");
-        arg_print_syntaxv(stdout, argtable, " ");
-        printf("\n\n");
-        arg_print_glossary(stdout, argtable, " %-50s %s\n");
+        print_help(argtable);
         return_status = EXIT_SUCCESS;
     }
     else if (version->count > 0)
@@ -708,6 +761,9 @@ int main(int argc, char** argv)
 #if DEBUG
         printf("=DEBUG= Generating new password for %s.\n", domain->sval[0]);
 #endif
+        // Parsing options for generating off passwords.
+        // Maybe move this to make for a more readable main method. (its pretty
+        // cluttered as it is)
         int min_pass_size, max_pass_size, required_lowercase,
             required_uppercase, required_digits, required_special_characters,
             len_of_special_chars, flag;
@@ -716,8 +772,6 @@ int main(int argc, char** argv)
         required_lowercase = required_uppercase = required_digits =
             required_special_characters = flag = 0;
         max_pass_size = min_pass_size = len_of_special_chars = -1;
-
-        tmp_file = tmpfile();
 
         if (min->count > 0) {
             min_pass_size = min->ival[0];
@@ -762,11 +816,6 @@ int main(int argc, char** argv)
             flag |= NO_SPECIAL_CHARACTER_FLAG;
         }
 
-        if (get_key())
-        {
-            fprintf(stderr, "Could not get the key.\n");
-        }
-
         if (generate_password(
                     min_pass_size,
                     max_pass_size,
@@ -785,9 +834,6 @@ int main(int argc, char** argv)
         {
             free(special_characters);
         }
-        fclose(tmp_file);
-        free(key);
-        key = NULL;
     }
     else if (import->count > 0 && output_file->count > 0 &&
             domain->count > 0)
@@ -796,67 +842,44 @@ int main(int argc, char** argv)
         printf("=DEBUG= Importing password %s for %s.\n", import->sval[0],
                 domain->sval[0]);
 #endif
-        if (get_key())
+        // TODO: remove init and clean_up from main. This should somehow be
+        // handled in import_password. However generate password depends on
+        // import_password and we do NOT want to call init and/or clean_up
+        // twice.
+        if (!init())
         {
-            fprintf(stderr, "Could not get the key.\n");
+            if (import_password(domain->sval[0], import->sval[0]))
+            {
+                return_status = EXIT_FAILURE;
+            }
+            clean_up();
         }
-
-        tmp_file = tmpfile();
-
-        if (import_password(domain->sval[0], import->sval[0]))
+        else
         {
             return_status = EXIT_FAILURE;
         }
-        fclose(tmp_file);
-        free(key);
-        key = NULL;
     }
     else if (create_new->count > 0 && output_file->count > 0)
     {
-        if (get_key())
-        {
-            fprintf(stderr, "Could not get the key.\n");
-        }
-
-        tmp_file = tmpfile();
-
         if (create_new_database())
         {
             return_status = EXIT_FAILURE;
         }
-
-        fclose(tmp_file);
-        free(key);
-        key = NULL;
     }
     else if (output_file->count > 0 && domain->count > 0)
     {
 #if DEBUG
         printf("=DEBUG= Fetching password for %s.\n", domain->sval[0]);
 #endif
-        if (get_key())
-        {
-            fprintf(stderr, "Could not get the key.\n");
-        }
-
-        tmp_file = tmpfile();
-
         if (fetch_password())
         {
             return_status = EXIT_FAILURE;
         }
-
-        fclose(tmp_file);
-        free(key);
-        key = NULL;
     }
     else
     {
-        printf("Could not find the desired action.\n");
-        printf("Synopsis:\n");
-        arg_print_syntaxv(stdout, argtable, " ");
-        printf("\n\n");
-        arg_print_glossary(stdout, argtable, " %-50s %s\n");
+        printf("Could not find the desired action.\n\n");
+        print_help(argtable);
         return_status = EXIT_FAILURE;
     }
 
